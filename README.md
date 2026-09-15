@@ -1,56 +1,26 @@
-# Ersilia's analysis template
+# Pathogen Pocketome
 
 [![status](https://img.shields.io/badge/status-pending-red)](https://github.com/)
 
-This repository provides a structured template for setting up new research analysis in Ersilia.
+The pathogen pocketome.
 
 ## Background
 
-Replace this paragraph with a short description of the project. This description should explain the background or context of the project, specifying collaborators.
+Starting from canonical protein sequences for 15 pathogens, the idea is to build up a structural annotation (PDB structures and predicted models from AF2, AF3, and homology modelling) and a functional annotation (Interpro, UniProt), then move into binding site identification, drawing on ligand evidence, AlphaFill, etc., to arrive at the pathogenic pocketome itself. From there, the plan would involve clustering billion-sized libraries down to something more tractable, maybe 10–50k compounds, and docking them against all the identified pockets, which will need to be GPU-accelerated. On top of that, surrogate modelling is envisioned (potentially with LQ, though faster inference may be needed), coupled with generative models in an iterative training-learning loop. The project is meant to be complementary to Ersilia's existing ChEMBL models, which are phenotypic, and also to target-based ChEMBL models, which are still to be defined.
+
+This is still very preliminary.
 
 ## Project tracking
 
-* [Meeting #1](https://example.com) - YYYY-MM-DD: Short description
-* ...
+* No meetings logged yet.
 
 ## Progress
 
-### Step 1
-
-Describe what was done in step 1.
-
-### Step 2
-
-Describe what was done in step 2.
+Not started yet.
 
 ## Repository structure
 
-This repository is organized as follows:
-
-- **data/**
-  - **raw/** → Original, untouched datasets  
-  - **processed/** → Cleaned and transformed datasets  
-
-- **scripts/** → Standalone scripts for preprocessing or automation. Numbered in sequential order for running.
-
-- **notebooks/** → Jupyter notebooks for exploration and prototyping.
-
-- **assets/** → Images, figures, and other static resources  
-
-- **output/** → Results of the scripts, numbered by file or folder according to the scripts numbering  
-
-- **src/** → Core source code and reusable modules  
-
-- **tools/** → Helper utilities and development tools  
-
-- **docs/** → Project documentation and reports.
-
-- **tmp/** → Temporary files or intermediate outputs  
-
-The project is tracked in [GitHub](https://github.com/ersilia-os/) (code) and [EOSVC](https://github.com/ersilia-os/eosvc) (data):
-
-* Tracked by Git and linked to a GitHub repository: `scripts/`, `notebooks/`, `src/`, `tools/`, `docs/` and `assets/`.
-* Tracked by `eosvc` and linked to a public or private S3 bucket: only `data/` and `output/`. The `access.json` file records whether they are public or private.
+See [CLAUDE.md](CLAUDE.md) for the repository structure and conventions.
 
 ## About the Ersilia Open Source Initiative
 
