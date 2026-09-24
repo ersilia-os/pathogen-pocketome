@@ -1,0 +1,4 @@
+## 01_download_uniprot_proteomes.py
+For each pathogen in `src/pathogens.csv`, downloads its UniProt reference proteome and produces a per-protein metadata table plus a zip of per-protein FASTA sequences.
+
+**Scope:** reference proteome only, not every sequenced strain — for *A. baumannii* this resolves unambiguously to `UP000032746` by querying the species-level taxonomy ID (470) and filtering for UniProt's "Reference proteome" flag. **Reviewed + unreviewed entries** are both kept, since bacterial/parasitic proteomes are sparsely curated in Swiss-Prot and a reviewed-only filter would drop most proteins. See `docs/2026-09-24_uniprot-proteome-pipeline.md` for the full rationale, including the field list (structural evidence, functional annotation, curated binding-site residues, quality flags).

@@ -1,6 +1,6 @@
 # Pathogen Pocketome
 
-[![status](https://img.shields.io/badge/status-pending-red)](https://github.com/)
+[![status](https://img.shields.io/badge/status-in%20progress-orange)](https://github.com/)
 
 The pathogen pocketome.
 
