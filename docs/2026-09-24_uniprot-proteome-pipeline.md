@@ -31,3 +31,11 @@ FASTA sequences are downloaded once per pathogen as a single multi-sequence file
 ## Mapping file scope
 
 `src/pathogens.csv` stores both the NCBI taxonomy ID and the pre-resolved reference-proteome accession per pathogen, rather than resolving the proteome ID at run time. This locks in a specific `UPxxxxxxx` for reproducibility; if UniProt ever re-designates a pathogen's reference proteome, the row needs a manual update (and a note of the change).
+
+## GO term name/aspect cache
+
+`go_ids` only stores GO codes (e.g. `GO:0003677`), not human-readable names, and UniProt's combined field doesn't label which GO aspect each ID belongs to. To make the GO annotations usable for downstream functional analysis (e.g. "what are the most frequent molecular functions in this proteome"), script 01 resolves every unique GO ID encountered — across all pathogens — to its term name and aspect (`molecular_function`, `biological_process`, or `cellular_component`) via the QuickGO REST API (`https://www.ebi.ac.uk/QuickGO/services/ontology/go/terms/{ids}`, batched at 100 IDs per request), caching the result in `data/raw/go/go_terms.csv`.
+
+This cache is organism-agnostic (GO is not pathogen-specific) and incremental: each run only fetches IDs not already present, so adding new pathogens later doesn't re-download the whole cache. Retrieval date is recorded per row (`retrieved_on`) rather than a GO release version, since QuickGO's term-lookup endpoint doesn't expose one directly.
+
+For *A. baumannii*, this resolved all 1806 unique GO IDs found across the 2383 (of 3839) proteins with any GO annotation, with no failed lookups: 1059 molecular_function, 647 biological_process, 100 cellular_component.

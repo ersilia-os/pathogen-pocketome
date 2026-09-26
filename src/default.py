@@ -1,5 +1,8 @@
 UNIPROT_REST_BASE = "https://rest.uniprot.org"
 
+QUICKGO_REST_BASE = "https://www.ebi.ac.uk/QuickGO/services"
+QUICKGO_BATCH_SIZE = 100
+
 UNIPROT_PROTEIN_FIELDS = [
     "accession",
     "id",

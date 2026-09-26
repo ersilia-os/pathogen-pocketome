@@ -1,6 +1,7 @@
 import os
 import sys
 import zipfile
+from datetime import date
 
 import pandas as pd
 import requests
@@ -8,15 +9,19 @@ import requests
 root = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(root, "..", "src"))
 
-from default import UNIPROT_REST_BASE, UNIPROT_PROTEIN_FIELDS
+from default import UNIPROT_REST_BASE, UNIPROT_PROTEIN_FIELDS, QUICKGO_REST_BASE, QUICKGO_BATCH_SIZE
 
 pathogens_file = os.path.join(root, "..", "src", "pathogens.csv")
 raw_dir = os.path.join(root, "..", "data", "raw", "uniprot")
+go_dir = os.path.join(root, "..", "data", "raw", "go")
 output_dir = os.path.join(root, "..", "output", "01_uniprot_proteome")
 tmp_dir = os.path.join(root, "..", "tmp", "01_uniprot_proteome")
 os.makedirs(raw_dir, exist_ok=True)
+os.makedirs(go_dir, exist_ok=True)
 os.makedirs(output_dir, exist_ok=True)
 os.makedirs(tmp_dir, exist_ok=True)
+
+go_terms_path = os.path.join(go_dir, "go_terms.csv")
 
 COLUMN_RENAME = {
     "Entry": "uniprot_ac",
@@ -92,8 +97,55 @@ def zip_fasta_files(fasta_paths, dest_zip):
             zf.write(path, arcname=os.path.basename(path))
 
 
+def extract_go_ids(go_ids_column):
+    ids = set()
+    for value in go_ids_column.dropna():
+        ids.update(x.strip() for x in value.split(";") if x.strip())
+    return ids
+
+
+def load_go_terms_cache():
+    if os.path.exists(go_terms_path):
+        return pd.read_csv(go_terms_path)
+    return pd.DataFrame(columns=["go_id", "name", "aspect", "retrieved_on"])
+
+
+def fetch_go_terms(go_ids):
+    # QuickGO REST API: term name + GO aspect (molecular_function / biological_process /
+    # cellular_component) per GO ID, batched at QUICKGO_BATCH_SIZE ids per request.
+    today = date.today().isoformat()
+    rows = []
+    for i in range(0, len(go_ids), QUICKGO_BATCH_SIZE):
+        chunk = go_ids[i:i + QUICKGO_BATCH_SIZE]
+        url = "{}/ontology/go/terms/{}".format(QUICKGO_REST_BASE, ",".join(chunk))
+        response = requests.get(url, headers={"Accept": "application/json"}, timeout=60)
+        response.raise_for_status()
+        for result in response.json()["results"]:
+            rows.append({
+                "go_id": result["id"],
+                "name": result.get("name"),
+                "aspect": result.get("aspect"),
+                "retrieved_on": today,
+            })
+    return pd.DataFrame(rows)
+
+
+def update_go_terms_cache(go_ids):
+    cache = load_go_terms_cache()
+    known_ids = set(cache["go_id"])
+    new_ids = sorted(set(go_ids) - known_ids)
+    if not new_ids:
+        print("GO terms cache: no new GO IDs to fetch ({} already cached)".format(len(known_ids)))
+        return
+    fetched = fetch_go_terms(new_ids)
+    updated = pd.concat([cache, fetched], ignore_index=True)
+    updated.to_csv(go_terms_path, index=False)
+    print("GO terms cache: fetched {} new GO IDs ({} total cached)".format(len(fetched), len(updated)))
+
+
 def main():
     pathogens = pd.read_csv(pathogens_file)
+    all_go_ids = set()
 
     for _, row in pathogens.iterrows():
         pathogen_code = row["pathogen_code"]
@@ -116,6 +168,7 @@ def main():
         df.insert(0, "pathogen_code", pathogen_code)
         proteins_csv_path = os.path.join(pathogen_output_dir, "{}_proteins.csv".format(pathogen_code))
         df.to_csv(proteins_csv_path, index=False)
+        all_go_ids.update(extract_go_ids(df["go_ids"]))
 
         fasta_paths = split_fasta(raw_fasta_path, pathogen_tmp_dir)
         sequences_zip_path = os.path.join(pathogen_output_dir, "{}_sequences.zip".format(pathogen_code))
@@ -129,6 +182,8 @@ def main():
                 pathogen_code, len(df), len(fasta_paths)
             )
         )
+
+    update_go_terms_cache(sorted(all_go_ids))
 
 
 if __name__ == "__main__":

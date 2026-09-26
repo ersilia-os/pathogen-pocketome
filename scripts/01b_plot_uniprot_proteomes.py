@@ -1,16 +1,19 @@
 import argparse
 import os
 import sys
+from collections import Counter
 
 import numpy as np
 import pandas as pd
 import stylia
+from matplotlib.lines import Line2D
 
 root = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(root, "..", "src"))
 
 pathogens_file = os.path.join(root, "..", "src", "pathogens.csv")
 proteome_dir = os.path.join(root, "..", "output", "01_uniprot_proteome")
+go_terms_path = os.path.join(root, "..", "data", "raw", "go", "go_terms.csv")
 output_dir = os.path.join(root, "..", "output", "01_uniprot_proteome")
 os.makedirs(output_dir, exist_ok=True)
 
@@ -40,36 +43,74 @@ DEMO_ONLY_PATHOGENS = [
 ]
 
 
+ANNOTATION_SCORES = [1, 2, 3, 4, 5]
+
+# GO aspect + number of terms used for the "top functions" panel (E). Fixed to the
+# aspect that literally means "function" (as opposed to biological_process or
+# cellular_component) — see docs/2026-09-24_uniprot-proteome-pipeline.md.
+TOP_GO_ASPECT = "molecular_function"
+TOP_N_GO_TERMS = 5
+
+
 def compute_stats(df):
     reviewed = df["reviewed"] == "reviewed"
     return {
         "n_proteins": len(df),
         "prop_reviewed": reviewed.mean(),
         "prop_unreviewed": 1 - reviewed.mean(),
-        "prop_pdb": df["xref_pdb"].notna().mean(),
-        "prop_pocket": (df["active_site"].notna() | df["binding_site"].notna()).mean(),
-        "annotation_scores": df["annotation_score"].dropna().values,
+        "n_pdb": df["xref_pdb"].notna().sum(),
+        "annotation_score_props": [
+            (df["annotation_score"] == score).mean() for score in ANNOTATION_SCORES
+        ],
     }
 
 
+def determine_top_go_ids(df, go_terms, aspect=TOP_GO_ASPECT, top_n=TOP_N_GO_TERMS):
+    counter = Counter()
+    for value in df["go_ids"].dropna():
+        counter.update(x.strip() for x in value.split(";") if x.strip())
+    candidates = [
+        (go_id, count) for go_id, count in counter.items()
+        if go_id in go_terms.index and go_terms.loc[go_id, "aspect"] == aspect
+    ]
+    candidates.sort(key=lambda item: item[1], reverse=True)
+    return [go_id for go_id, _ in candidates[:top_n]]
+
+
+def compute_go_term_props(df, go_ids):
+    filled = df["go_ids"].fillna("")
+    return [filled.str.contains(go_id, regex=False).mean() for go_id in go_ids]
+
+
 def load_summaries(pathogens, demo=False):
+    go_terms = pd.read_csv(go_terms_path).set_index("go_id")
+
     labels = []
     n_proteins = []
     prop_reviewed = []
     prop_unreviewed = []
-    prop_pdb = []
-    prop_pocket = []
-    annotation_scores = []
+    n_pdb = []
+    annotation_score_props = []
+    go_term_props = []
 
     reference_stats = None
+    reference_df = None
+    top_go_ids = None
+    top_go_names = None
     for _, row in pathogens.iterrows():
         code = row["pathogen_code"]
         proteins_csv = os.path.join(proteome_dir, code, "{}_proteins.csv".format(code))
         if os.path.exists(proteins_csv):
-            stats = compute_stats(pd.read_csv(proteins_csv))
-            reference_stats = reference_stats or stats
+            df = pd.read_csv(proteins_csv)
+            stats = compute_stats(df)
+            if reference_stats is None:
+                reference_stats = stats
+                reference_df = df
+                top_go_ids = determine_top_go_ids(df, go_terms)
+                top_go_names = [go_terms.loc[go_id, "name"] for go_id in top_go_ids]
         elif demo and reference_stats is not None:
             print("{}: no real download yet, reusing reference numbers for the demo figure".format(code))
+            df = reference_df
             stats = reference_stats
         else:
             print("Skipping {}: {} not found".format(code, proteins_csv))
@@ -79,18 +120,19 @@ def load_summaries(pathogens, demo=False):
         n_proteins.append(stats["n_proteins"])
         prop_reviewed.append(stats["prop_reviewed"])
         prop_unreviewed.append(stats["prop_unreviewed"])
-        prop_pdb.append(stats["prop_pdb"])
-        prop_pocket.append(stats["prop_pocket"])
-        annotation_scores.append(stats["annotation_scores"])
+        n_pdb.append(stats["n_pdb"])
+        annotation_score_props.append(stats["annotation_score_props"])
+        go_term_props.append(compute_go_term_props(df, top_go_ids))
 
     return {
         "labels": labels,
         "n_proteins": n_proteins,
         "prop_reviewed": prop_reviewed,
         "prop_unreviewed": prop_unreviewed,
-        "prop_pdb": prop_pdb,
-        "prop_pocket": prop_pocket,
-        "annotation_scores": annotation_scores,
+        "n_pdb": n_pdb,
+        "annotation_score_props": annotation_score_props,
+        "top_go_names": top_go_names,
+        "go_term_props": go_term_props,
     }
 
 
@@ -129,44 +171,63 @@ def plot_reviewed_stack(ax, summary, show_labels):
     stylia.label(ax, xlabel="Proportion of proteins", ylabel="", title="Reviewed status", abc="B")
 
 
-def plot_pdb_proportion(ax, summary, show_labels):
+def plot_pdb_count(ax, summary, show_labels):
     nc = stylia.NamedColors()
     n = len(summary["labels"])
     positions = np.arange(n)
-    ax.barh(positions, summary["prop_pdb"], color=nc.turquoise)
+    ax.hlines(positions, 0, summary["n_pdb"], color=nc.turquoise)
+    ax.plot(summary["n_pdb"], positions, "o", color=nc.turquoise)
+    style_yaxis(ax, n, summary["labels"], show_labels)
+    stylia.label(ax, xlabel="Number of proteins with PDB structure", ylabel="", title="Structural coverage", abc="C")
+
+
+def plot_annotation_score_proportion(ax, summary, show_labels):
+    n = len(summary["labels"])
+    positions = np.arange(n)
+    cm = stylia.FadingColormap("cobalt")
+    cm.fit(ANNOTATION_SCORES)
+    colors = cm.transform(ANNOTATION_SCORES)
+    left = np.zeros(n)
+    for i, (score, color) in enumerate(zip(ANNOTATION_SCORES, colors)):
+        props = np.array([p[i] for p in summary["annotation_score_props"]])
+        ax.barh(positions, props, left=left, color=color, label=str(score))
+        left += props
     style_yaxis(ax, n, summary["labels"], show_labels)
     ax.set_xlim(0, 1)
-    stylia.label(ax, xlabel="Proportion with PDB structure", ylabel="", title="Structural coverage", abc="C")
+    ax.legend(title="Score")
+    stylia.label(ax, xlabel="Proportion of proteins", ylabel="", title="Annotation quality", abc="D")
 
 
-def plot_annotation_score(ax, summary, show_labels):
+def plot_top_go_dotplot(ax, summary, show_labels):
     nc = stylia.NamedColors()
     n = len(summary["labels"])
     positions = np.arange(n)
-    ax.boxplot(
-        summary["annotation_scores"],
-        positions=positions,
-        vert=False,
-        widths=0.6,
-        patch_artist=True,
-        boxprops=dict(facecolor=nc.get("cobalt", lighten=0.5), color=nc.cobalt),
-        medianprops=dict(color=nc.cobalt),
-        whiskerprops=dict(color=nc.cobalt),
-        capprops=dict(color=nc.cobalt),
-        flierprops=dict(markeredgecolor=nc.cobalt),
-    )
-    style_yaxis(ax, n, summary["labels"], show_labels)
-    stylia.label(ax, xlabel="Annotation score", ylabel="", title="Annotation quality", abc="D")
+    names = summary["top_go_names"]
+    x_positions = np.arange(len(names))
 
+    xs, ys, sizes = [], [], []
+    for i, props in enumerate(summary["go_term_props"]):
+        for j, prop in enumerate(props):
+            xs.append(x_positions[j])
+            ys.append(positions[i])
+            sizes.append(prop)
 
-def plot_pocket_proportion(ax, summary, show_labels):
-    nc = stylia.NamedColors()
-    n = len(summary["labels"])
-    positions = np.arange(n)
-    ax.barh(positions, summary["prop_pocket"], color=nc.tangerine)
+    size_scale = 3000
+    legend_props = [0.01, 0.10]
+    ax.scatter(xs, ys, s=np.array(sizes) * size_scale, color=nc.tangerine, alpha=0.7, edgecolor=nc.tangerine)
+    legend_handles = [
+        Line2D(
+            [0], [0], marker="o", linestyle="", color=nc.tangerine, markeredgecolor=nc.tangerine,
+            alpha=0.7, markersize=np.sqrt(p * size_scale), label="{:.0%}".format(p),
+        )
+        for p in legend_props
+    ]
+    ax.legend(handles=legend_handles, title="Proportion", loc="upper right")
+
+    ax.set_xticks(x_positions)
+    ax.set_xticklabels([str(i + 1) for i in range(len(names))])
     style_yaxis(ax, n, summary["labels"], show_labels)
-    ax.set_xlim(0, 1)
-    stylia.label(ax, xlabel="Proportion with pocket residues", ylabel="", title="Pocket annotation", abc="E")
+    stylia.label(ax, xlabel="", ylabel="", title="Top functions", abc="E")
 
 
 def build_pathogens(demo):
@@ -196,9 +257,9 @@ def main():
     fig, axs = stylia.create_figure(1, 5)
     plot_protein_counts(axs.next(), summary, show_labels=True)
     plot_reviewed_stack(axs.next(), summary, show_labels=False)
-    plot_pdb_proportion(axs.next(), summary, show_labels=False)
-    plot_annotation_score(axs.next(), summary, show_labels=False)
-    plot_pocket_proportion(axs.next(), summary, show_labels=False)
+    plot_pdb_count(axs.next(), summary, show_labels=False)
+    plot_annotation_score_proportion(axs.next(), summary, show_labels=False)
+    plot_top_go_dotplot(axs.next(), summary, show_labels=False)
 
     filename = "01b_uniprot_overview_DEMO.png" if args.demo else "01b_uniprot_overview.png"
     output_path = os.path.join(output_dir, filename)
